@@ -840,7 +840,7 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB ) PRIVILEGED_FUNCTION;
 
 #endif /* configSUPPORT_DYNAMIC_ALLOCATION */
 	
-	
+	#if (configUSE_EDF_SCHEDULER==1)
 	BaseType_t xTaskPeriodicCreate(	TaskFunction_t pxTaskCode,
 							const char * const pcName,		/*lint !e971 Unqualified char types are allowed for strings and single characters only. */
 							const configSTACK_DEPTH_TYPE usStackDepth,
@@ -919,7 +919,15 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB ) PRIVILEGED_FUNCTION;
 			
 			#endif /* tskSTATIC_AND_DYNAMIC_ALLOCATION_POSSIBLE */
 
+					pxNewTCB->xTaskPeriod = period;
+		
+		/*E.C. : insert the period value in the generic list iteam before to add the
+task in RL: */
+			
+			
 			prvInitialiseNewTask( pxTaskCode, pcName, ( uint32_t ) usStackDepth, pvParameters, uxPriority, pxCreatedTask, pxNewTCB, NULL );
+			
+			listSET_LIST_ITEM_VALUE( &( ( pxNewTCB )->xStateListItem ), ( pxNewTCB)->xTaskPeriod + xTaskGetTickCount());
 			prvAddNewTaskToReadyList( pxNewTCB );
 			xReturn = pdPASS;
 		}
@@ -928,17 +936,9 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB ) PRIVILEGED_FUNCTION;
 			xReturn = errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY;
 		}
 		
-		pxNewTCB->xTaskPeriod = period;
-		
-		/*E.C. : insert the period value in the generic list iteam before to add the
-task in RL: */
- listSET_LIST_ITEM_VALUE( &( ( pxNewTCB )->xStateListItem ), ( pxNewTCB)->xTaskPeriod + xTaskGetTickCount());
- prvAddTaskToReadyList( pxNewTCB );
-		
-
 		return xReturn;
 	}
-	
+#endif	
 	
 	
 	
@@ -1229,6 +1229,8 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 			so far. */
 			if( xSchedulerRunning == pdFALSE )
 			{
+			
+	#if (configUSE_EDF_SCHEDULER == 0)
 				if( pxCurrentTCB->uxPriority <= pxNewTCB->uxPriority )
 				{
 					pxCurrentTCB = pxNewTCB;
@@ -1237,13 +1239,20 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 				{
 					mtCOVERAGE_TEST_MARKER();
 				}
+				#else
+			if(listGET_LIST_ITEM_VALUE( &( pxCurrentTCB->xStateListItem ) )  >= listGET_LIST_ITEM_VALUE( &(pxNewTCB->xStateListItem) ) )
+				{
+					pxCurrentTCB = pxNewTCB;
+				}
+		#endif
 			}
 			else
 			{
 				mtCOVERAGE_TEST_MARKER();
 			}
+			
 		}
-
+		
 		uxTaskNumber++;
 
 		#if ( configUSE_TRACE_FACILITY == 1 )
@@ -2131,7 +2140,7 @@ BaseType_t xReturn;
 		/* The Idle task is being created using dynamically allocated RAM. */
 		#if (configUSE_EDF_SCHEDULER == 1)
 		{
-			TickType_t initIDLEPeriod = 300;
+			TickType_t initIDLEPeriod = 4000;
 			xReturn = xTaskPeriodicCreate(	prvIdleTask,
 								configIDLE_TASK_NAME,
 								configMINIMAL_STACK_SIZE,
@@ -2929,16 +2938,38 @@ BaseType_t xSwitchRequired = pdFALSE;
 
 					/* Place the unblocked task into the appropriate ready
 					list. */
+					
+					
+					#if (configUSE_EDF_SCHEDULER == 1)
+						/*Update The deadline of the current task*/
+						
+						listSET_LIST_ITEM_VALUE( &( ( pxTCB )->xStateListItem ), ( pxTCB)->xTaskPeriod + xTaskGetTickCount());
+						#endif //configUSE_EDF_SCHEDULER == 1
+					
 					prvAddTaskToReadyList( pxTCB );
 
 					/* A task being unblocked cannot cause an immediate
 					context switch if preemption is turned off. */
+					
+					
 					#if (  configUSE_PREEMPTION == 1 )
 					{
-						/* Preemption is on, but a context switch should
-						only be performed if the unblocked task has a
-						priority that is equal to or higher than the
-						currently executing task. */
+						
+					#if (configUSE_EDF_SCHEDULER == 1)
+						{						// Preemption is on, but a context switch should only be performed if the unblocked task has a
+						//priority that is equal to or higher than the
+						//currently executing task. */
+								/* a context switch is performed if the unblocked task has a deadline that is lower than the currently executing task. */
+						 
+						if(listGET_LIST_ITEM_VALUE( &( pxTCB->xStateListItem )) < listGET_LIST_ITEM_VALUE( &( pxCurrentTCB->xStateListItem ) ))
+						{
+								xSwitchRequired = pdTRUE;
+						}
+					}
+		
+						
+
+						#else
 						if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
 						{
 							xSwitchRequired = pdTRUE;
@@ -2947,12 +2978,14 @@ BaseType_t xSwitchRequired = pdFALSE;
 						{
 							mtCOVERAGE_TEST_MARKER();
 						}
+					
+						#endif // configUSE_EDF_SCHEDULER
 					}
 					#endif /* configUSE_PREEMPTION */
 				}
 			}
 		}
-
+#if (configUSE_EDF_SCHEDULER == 0)
 		/* Tasks of equal priority to the currently running task will share
 		processing time (time slice) if preemption is on, and the application
 		writer has not explicitly turned time slicing off. */
@@ -2968,7 +3001,9 @@ BaseType_t xSwitchRequired = pdFALSE;
 			}
 		}
 		#endif /* ( ( configUSE_PREEMPTION == 1 ) && ( configUSE_TIME_SLICING == 1 ) ) */
-
+		
+		#endif //(configUSE_EDF_SCHEDULER == 1)
+		
 		#if ( configUSE_TICK_HOOK == 1 )
 		{
 			/* Guard against the tick hook being called when the pended tick
@@ -2997,6 +3032,7 @@ BaseType_t xSwitchRequired = pdFALSE;
 		}
 		#endif /* configUSE_PREEMPTION */
 	}
+
 	else
 	{
 		++xPendedTicks;
@@ -3183,8 +3219,7 @@ void vTaskSwitchContext( void )
 		}
 	#else
 		{
-		pxCurrentTCB = (TCB_t * ) listGET_OWNER_OF_HEAD_ENTRY( &(
-		xReadyTasksListEDF ) );
+		pxCurrentTCB = (TCB_t * ) listGET_OWNER_OF_HEAD_ENTRY( &(xReadyTasksListEDF ) );
 		}
 		#endif
 		
@@ -3551,14 +3586,20 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
 	the idle task is responsible for deleting the task's secure context, if
 	any. */
 	portALLOCATE_SECURE_CONTEXT( configMINIMAL_SECURE_STACK_SIZE );
-
+	vTaskSetApplicationTaskTag( xIdleTaskHandle, ( void * ) 0 );
 	for( ;; )
 	{
 		/* See if any tasks have deleted themselves - if so then the idle task
 		is responsible for freeing the deleted task's TCB and stack. */
 		prvCheckTasksWaitingTermination();
 		
-
+		#if (configUSE_EDF_SCHEDULER == 1)
+		 listSET_LIST_ITEM_VALUE( &( ( pxCurrentTCB )->xStateListItem ), ( pxCurrentTCB)->xTaskPeriod + xTaskGetTickCount());
+		
+		
+			
+		#endif
+		//xIdleTaskHandle
 
 		#if ( configUSE_PREEMPTION == 0 )
 		{
